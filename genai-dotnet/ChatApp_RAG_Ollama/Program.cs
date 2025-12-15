@@ -3,13 +3,16 @@ using ChatApp_RAG_Ollama.Components;
 using ChatApp_RAG_Ollama.Services;
 using ChatApp_RAG_Ollama.Services.Ingestion;
 using OllamaSharp;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 
-IChatClient chatClient = new OllamaApiClient(new Uri("http://localhost:11434"),
+IChatClient chatClient = new OllamaApiClient(new Uri("http://yashpc:9630"),
     "llama3.2");
-IEmbeddingGenerator<string, Embedding<float>> embeddingGenerator = new OllamaApiClient(new Uri("http://localhost:11434"),
+IEmbeddingGenerator<string, Embedding<float>> embeddingGenerator = new OllamaApiClient(new Uri("http://yashpc:9630"),
     "all-minilm");
 
 var vectorStorePath = Path.Combine(AppContext.BaseDirectory, "vector-store.db");
@@ -21,6 +24,53 @@ builder.Services.AddScoped<DataIngestor>();
 builder.Services.AddSingleton<SemanticSearch>();
 builder.Services.AddChatClient(chatClient).UseFunctionInvocation().UseLogging();
 builder.Services.AddEmbeddingGenerator(embeddingGenerator);
+
+// Add JWT Authentication Services
+builder.Services.AddScoped<AuthService>();
+builder.Services.AddScoped<JwtService>();
+builder.Services.AddScoped<AuthStateService>();
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddHttpClient();
+builder.Services.AddScoped<HttpClient>(sp =>
+{
+    var httpContextAccessor = sp.GetRequiredService<IHttpContextAccessor>();
+    var httpContext = httpContextAccessor.HttpContext;
+    
+    var httpClient = new HttpClient();
+    
+    if (httpContext != null)
+    {
+        var request = httpContext.Request;
+        var baseUri = $"{request.Scheme}://{request.Host}{request.PathBase}";
+        httpClient.BaseAddress = new Uri(baseUri);
+    }
+    
+    return httpClient;
+});
+builder.Services.AddControllers();
+
+// Configure JWT Authentication
+var jwtSecretKey = builder.Configuration["Jwt:SecretKey"] ?? "YourSuperSecretKeyThatIsAtLeast32CharactersLong!";
+var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "ChatAppRAG";
+var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "ChatAppRAGUsers";
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.ASCII.GetBytes(jwtSecretKey)),
+            ValidateIssuer = true,
+            ValidIssuer = jwtIssuer,
+            ValidateAudience = true,
+            ValidAudience = jwtAudience,
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.Zero
+        };
+    });
+
+builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
@@ -35,7 +85,11 @@ if (!app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 app.UseAntiforgery();
 
+app.UseAuthentication();
+app.UseAuthorization();
+
 app.UseStaticFiles();
+app.MapControllers();
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 

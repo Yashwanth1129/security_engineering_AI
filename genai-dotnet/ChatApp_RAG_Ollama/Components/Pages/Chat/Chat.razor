@@ -3,11 +3,26 @@
 @inject IChatClient ChatClient
 @inject NavigationManager Nav
 @inject SemanticSearch Search
+@inject AuthStateService AuthState
 @implements IDisposable
 
 <PageTitle>Chat</PageTitle>
 
-<ChatHeader OnNewChat="@ResetConversationAsync" />
+@if (!isAuthenticated)
+{
+    <div class="min-h-screen flex items-center justify-center bg-gray-50">
+        <div class="text-center">
+            <h2 class="text-2xl font-bold text-gray-900 mb-4">Authentication Required</h2>
+            <p class="text-gray-600 mb-6">Please log in to access the AI chat.</p>
+            <button @onclick="RedirectToLogin" class="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700">
+                Go to Login
+            </button>
+        </div>
+    </div>
+}
+else
+{
+    <ChatHeader OnNewChat="@ResetConversationAsync" OnLogout="@HandleLogout" Username="@AuthState.Username" />
 
 <ChatMessageList Messages="@messages" InProgressMessage="@currentResponseMessage">
     <NoMessagesContent>
@@ -22,6 +37,7 @@
     <ChatInput OnSend="@AddUserMessageAsync" @ref="@chatInput" />
     <SurveyPrompt /> @* Remove this line to eliminate the template survey message *@
 </div>
+}
 
 @code {
     private const string SystemPrompt = @"
@@ -46,11 +62,28 @@
     private ChatMessage? currentResponseMessage;
     private ChatInput? chatInput;
     private ChatSuggestions? chatSuggestions;
+    private bool isAuthenticated = false;
 
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
-        messages.Add(new(ChatRole.System, SystemPrompt));
-        chatOptions.Tools = [AIFunctionFactory.Create(SearchAsync)];
+        isAuthenticated = await AuthState.CheckAuthenticationAsync();
+        
+        if (isAuthenticated)
+        {
+            messages.Add(new(ChatRole.System, SystemPrompt));
+            chatOptions.Tools = [AIFunctionFactory.Create(SearchAsync)];
+        }
+    }
+
+    private void RedirectToLogin()
+    {
+        Nav.NavigateTo("/login");
+    }
+
+    private async Task HandleLogout()
+    {
+        await AuthState.LogoutAsync();
+        Nav.NavigateTo("/login", forceLoad: true);
     }
 
     private async Task AddUserMessageAsync(ChatMessage userMessage)
